@@ -189,6 +189,15 @@ func (t atomText) value() string {
 	return text(t.Chars)
 }
 
+// html returns the construct as markup, without decoding character references:
+// content and summary bodies are handed to readers as-is.
+func (t atomText) html() string {
+	if strings.EqualFold(t.Type, "xhtml") {
+		return strings.TrimSpace(t.Inner)
+	}
+	return strings.TrimSpace(t.Chars)
+}
+
 type atomEntry struct {
 	Title      atomText       `xml:"title"`
 	ID         string         `xml:"id"`
@@ -238,8 +247,8 @@ func parseAtom(data []byte, baseURL string) (*Feed, error) {
 		e := Entry{
 			Title:       ae.Title.value(),
 			Link:        resolve(entryBase, pickLink(ae.Links)),
-			Content:     ae.Content.value(),
-			Summary:     ae.Summary.value(),
+			Content:     ae.Content.html(),
+			Summary:     ae.Summary.html(),
 			SourceTitle: f.Title,
 			SourceURL:   baseURL,
 		}
