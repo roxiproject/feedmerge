@@ -1,0 +1,14 @@
+# Binaries
+/feedmerge
+/dist/
+*.exe
+*.test
+
+# Coverage and profiling output
+*.out
+*.prof
+
+# Editor and OS noise
+.DS_Store
+.idea/
+.vscode/
