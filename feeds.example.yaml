@@ -1,0 +1,30 @@
+# feedmerge configuration.
+title: Go and Systems Reading
+link: https://example.org/reading
+description: A merged feed of Go, distributed systems and release announcements.
+self_link: https://example.org/reading/feed.xml
+
+addr: ":8080"
+refresh: 15m          # how often to re-fetch every source
+timeout: 20s          # per-feed HTTP timeout
+workers: 8            # concurrent fetches
+host_interval: 1s     # minimum delay between requests to the same host
+max_items: 200        # cap on the merged output
+
+# Deduplication tuning.
+title_threshold: 0.9  # Jaccard similarity at which two titles are "the same"
+title_window: 72h     # only match by title within this time distance
+
+# Filter DSL: applied after deduplication, in order.
+filters:
+  - exclude title ~ /\b(sponsored|advertisement)\b/i
+  - exclude link ~ /utm_campaign=paid/
+  - include any ~ /(golang|distributed systems|postgres)/i
+
+feeds:
+  - url: https://go.dev/blog/feed.atom
+    name: The Go Blog
+  - url: https://blog.golang.org/feed.atom
+    name: Go Blog (mirror)
+  - url: https://www.postgresql.org/news.rss
+    name: PostgreSQL News
