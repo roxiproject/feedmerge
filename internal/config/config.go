@@ -20,6 +20,23 @@ type Source struct {
 	Name string `json:"name,omitempty"`
 }
 
+// UnmarshalJSON accepts either {"url": ..., "name": ...} or a bare URL string,
+// mirroring what the YAML loader allows.
+func (s *Source) UnmarshalJSON(b []byte) error {
+	var str string
+	if err := json.Unmarshal(b, &str); err == nil {
+		s.URL = str
+		return nil
+	}
+	type alias Source
+	var a alias
+	if err := json.Unmarshal(b, &a); err != nil {
+		return err
+	}
+	*s = Source(a)
+	return nil
+}
+
 // Config is the fully validated configuration.
 type Config struct {
 	Title       string   `json:"title"`
