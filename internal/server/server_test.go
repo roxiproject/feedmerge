@@ -73,6 +73,8 @@ func newTestSetup(t *testing.T, extraFilters ...string) (*Server, *Merger, func(
 	for _, f := range append([]string{"exclude title ~ /sponsored/i"}, extraFilters...) {
 		src += "  - " + f + "\n"
 	}
+	src += "searches:\n  - name: go\n    query: go headline\n    title: Go stories\n" +
+		"  - name: capped\n    query: story\n    limit: 1\n"
 	src += fmt.Sprintf("feeds:\n  - url: %s/rss.xml\n    name: RSS Source\n  - url: %s/atom.xml\n  - url: %s/broken.xml\n",
 		rss.URL, atom.URL, broken.URL)
 
