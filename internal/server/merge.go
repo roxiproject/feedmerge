@@ -15,6 +15,7 @@ import (
 	"github.com/roxiproject/feedmerge/internal/config"
 	"github.com/roxiproject/feedmerge/internal/feed"
 	"github.com/roxiproject/feedmerge/internal/fetch"
+	"github.com/roxiproject/feedmerge/internal/search"
 )
 
 // SourceStatus records the outcome of the last fetch of one source.
@@ -42,6 +43,9 @@ type Snapshot struct {
 	Sources []SourceStatus
 	// Failures counts sources that could not be fetched or parsed.
 	Failures int
+	// Index is a full-text index over Raw, rebuilt with every snapshot so that
+	// a search never sees a half-updated index.
+	Index *search.Index
 }
 
 // Merger owns the fetch/merge/render cycle.
@@ -170,6 +174,7 @@ func (m *Merger) Refresh(ctx context.Context) (*Snapshot, error) {
 		Sources:  statuses,
 		Failures: failures,
 		Modified: meta.Updated.Truncate(time.Second),
+		Index:    search.New(entries),
 	}
 	var buf bytes.Buffer
 	if err := feed.WriteRSS(&buf, meta, entries); err != nil {
