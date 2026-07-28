@@ -286,3 +286,70 @@ func TestParseReader(t *testing.T) {
 		t.Fatalf("got %d entries", len(f.Entries))
 	}
 }
+
+func TestParseHubAndSelfLinks(t *testing.T) {
+	tests := []struct {
+		name     string
+		doc      string
+		base     string
+		wantHubs []string
+		wantSelf string
+	}{
+		{
+			name: "atom hub and self",
+			doc: `<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom">
+				<title>T</title>
+				<link rel="hub" href="https://hub.example/"/>
+				<link rel="self" href="/feed.atom"/>
+				<link rel="alternate" href="https://site.example/"/></feed>`,
+			base:     "https://site.example/feed.atom",
+			wantHubs: []string{"https://hub.example/"},
+			wantSelf: "https://site.example/feed.atom",
+		},
+		{
+			name: "rss borrows atom links",
+			doc: `<?xml version="1.0"?><rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom"><channel>
+				<title>T</title><link>https://site.example/</link><description>d</description>
+				<atom:link rel="hub" href="https://a.example/hub"/>
+				<atom:link rel="hub" href="https://b.example/hub"/>
+				<atom:link rel="self" href="https://site.example/rss.xml"/>
+				</channel></rss>`,
+			base:     "https://site.example/rss.xml",
+			wantHubs: []string{"https://a.example/hub", "https://b.example/hub"},
+			wantSelf: "https://site.example/rss.xml",
+		},
+		{
+			name: "duplicate hubs collapse",
+			doc: `<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><title>T</title>
+				<link rel="hub" href="https://hub.example/"/>
+				<link rel="HUB" href="https://hub.example/"/></feed>`,
+			base:     "https://site.example/f",
+			wantHubs: []string{"https://hub.example/"},
+		},
+		{
+			name:     "no links at all",
+			doc:      `<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><title>T</title></feed>`,
+			base:     "https://site.example/f",
+			wantHubs: nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := ParseBytes([]byte(tt.doc), tt.base)
+			if err != nil {
+				t.Fatalf("ParseBytes: %v", err)
+			}
+			if len(f.Hubs) != len(tt.wantHubs) {
+				t.Fatalf("hubs = %v, want %v", f.Hubs, tt.wantHubs)
+			}
+			for i, h := range tt.wantHubs {
+				if f.Hubs[i] != h {
+					t.Errorf("hub %d = %q, want %q", i, f.Hubs[i], h)
+				}
+			}
+			if tt.wantSelf != "" && f.Self != tt.wantSelf {
+				t.Errorf("self = %q, want %q", f.Self, tt.wantSelf)
+			}
+		})
+	}
+}

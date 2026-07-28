@@ -52,6 +52,12 @@ type Feed struct {
 	Entries     []Entry
 	// Format is "rss" or "atom", describing the document that was parsed.
 	Format string
+	// Hubs lists WebSub (PubSubHubbub) hub URLs advertised by the document
+	// through <link rel="hub">, in the order they appeared.
+	Hubs []string
+	// Self is the document's own advertised URL (<link rel="self">), which a
+	// WebSub subscription has to name as its topic.
+	Self string
 }
 
 // resolve resolves ref against base. If base is empty or either URL fails to

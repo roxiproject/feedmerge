@@ -74,12 +74,17 @@ type rssDoc struct {
 }
 
 type rssChannel struct {
-	Title         string    `xml:"title"`
-	Link          string    `xml:"link"`
-	Description   string    `xml:"description"`
-	PubDate       string    `xml:"pubDate"`
-	LastBuildDate string    `xml:"lastBuildDate"`
-	Items         []rssItem `xml:"item"`
+	Title string `xml:"title"`
+	// AtomLinks carries the Atom link elements RSS feeds borrow to advertise
+	// their WebSub hub and their own canonical URL. It has to be declared
+	// before Link: an untagged-namespace field like <link> matches an element
+	// of any namespace, so whichever of the two comes first wins.
+	AtomLinks     []atomLink `xml:"http://www.w3.org/2005/Atom link"`
+	Link          string     `xml:"link"`
+	Description   string     `xml:"description"`
+	PubDate       string     `xml:"pubDate"`
+	LastBuildDate string     `xml:"lastBuildDate"`
+	Items         []rssItem  `xml:"item"`
 }
 
 type rssItem struct {
@@ -116,6 +121,7 @@ func parseRSS(data []byte, baseURL string) (*Feed, error) {
 	if t, err := ParseDate(firstNonEmpty(ch.LastBuildDate, ch.PubDate)); err == nil {
 		f.Updated = t
 	}
+	f.Hubs, f.Self = relLinks(ch.AtomLinks, baseURL)
 	base := firstNonEmpty(f.Link, baseURL)
 	for _, it := range ch.Items {
 		itemBase := base
@@ -239,6 +245,7 @@ func parseAtom(data []byte, baseURL string) (*Feed, error) {
 	if t, err := ParseDate(doc.Updated); err == nil {
 		f.Updated = t
 	}
+	f.Hubs, f.Self = relLinks(doc.Links, base)
 	for _, ae := range doc.Entries {
 		entryBase := base
 		if ae.Base != "" {
@@ -303,6 +310,31 @@ func pickLink(links []atomLink) string {
 		}
 	}
 	return firstNonEmpty(noRel, any)
+}
+
+// relLinks extracts the WebSub hub URLs and the rel="self" URL from a set of
+// Atom link elements. Duplicate hubs are collapsed, preserving first-seen
+// order, and every href is resolved against base.
+func relLinks(links []atomLink, base string) (hubs []string, self string) {
+	seen := map[string]bool{}
+	for _, l := range links {
+		href := resolve(base, l.Href)
+		if href == "" {
+			continue
+		}
+		switch strings.ToLower(strings.TrimSpace(l.Rel)) {
+		case "hub":
+			if !seen[href] {
+				seen[href] = true
+				hubs = append(hubs, href)
+			}
+		case "self":
+			if self == "" {
+				self = href
+			}
+		}
+	}
+	return hubs, self
 }
 
 // ---------------------------------------------------------------- helpers
