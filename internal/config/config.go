@@ -37,6 +37,28 @@ func (s *Source) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+// SavedSearch is a named query the server publishes as a feed of its own, so a
+// reader can subscribe to a slice of the merge rather than all of it.
+type SavedSearch struct {
+	// Name identifies the search in the URL, so it is restricted to letters,
+	// digits, '-' and '_'.
+	Name  string `json:"name"`
+	Query string `json:"query"`
+	// Title is the title of the generated feed; it defaults to the name.
+	Title string `json:"title,omitempty"`
+	// Limit caps how many entries the feed carries. Zero means no cap beyond
+	// the merged feed's own max_items.
+	Limit int `json:"limit,omitempty"`
+}
+
+// FeedTitle returns the title to publish the search under.
+func (s SavedSearch) FeedTitle() string {
+	if s.Title != "" {
+		return s.Title
+	}
+	return s.Name
+}
+
 // Config is the fully validated configuration.
 type Config struct {
 	Title       string   `json:"title"`
@@ -55,8 +77,9 @@ type Config struct {
 	TitleThreshold float64  `json:"title_threshold"`
 	TitleWindow    Duration `json:"title_window"`
 
-	Filters []string `json:"filters"`
-	Feeds   []Source `json:"feeds"`
+	Filters  []string      `json:"filters"`
+	Searches []SavedSearch `json:"searches,omitempty"`
+	Feeds    []Source      `json:"feeds"`
 
 	// FilterSet is the compiled form of Filters.
 	FilterSet *filter.Set `json:"-"`
@@ -124,6 +147,44 @@ func (c Config) DedupOptions() feed.DedupOptions {
 		TitleThreshold: c.TitleThreshold,
 		TitleWindow:    int64(c.TitleWindow.D() / time.Second),
 	}
+}
+
+// validateSearches checks that saved searches are addressable and runnable.
+func validateSearches(searches []SavedSearch) error {
+	seen := map[string]bool{}
+	for i, ss := range searches {
+		name := strings.TrimSpace(ss.Name)
+		if name == "" {
+			return fmt.Errorf("config: saved search %d has no name", i+1)
+		}
+		if !isSearchName(name) {
+			return fmt.Errorf("config: saved search %q: name may only contain letters, digits, '-' and '_'", name)
+		}
+		if seen[name] {
+			return fmt.Errorf("config: duplicate saved search %q", name)
+		}
+		seen[name] = true
+		if strings.TrimSpace(ss.Query) == "" {
+			return fmt.Errorf("config: saved search %q has no query", name)
+		}
+		if ss.Limit < 0 {
+			return fmt.Errorf("config: saved search %q: limit must not be negative", name)
+		}
+		searches[i].Name = name
+	}
+	return nil
+}
+
+// isSearchName reports whether name is safe to put in a URL path segment.
+func isSearchName(name string) bool {
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // Load reads and validates a config file. Files ending in .json are parsed as
@@ -246,6 +307,42 @@ func ParseYAML(src string) (*Config, error) {
 		return nil, fmt.Errorf("config: line %d: \"filters\" must be a list", n.line)
 	}
 
+	known["searches"] = true
+	if n := root.child("searches"); n != nil {
+		if n.kind != kindSeq {
+			return nil, fmt.Errorf("config: line %d: \"searches\" must be a list", n.line)
+		}
+		for _, it := range n.items {
+			if it.kind != kindMap {
+				return nil, fmt.Errorf("config: line %d: a saved search must be a mapping", it.line)
+			}
+			var ss SavedSearch
+			for _, k := range it.keys {
+				v := it.fields[k]
+				if v.kind != kindScalar {
+					return nil, fmt.Errorf("config: line %d: search %q must be a scalar", v.line, k)
+				}
+				switch k {
+				case "name":
+					ss.Name = v.scalar
+				case "query":
+					ss.Query = v.scalar
+				case "title":
+					ss.Title = v.scalar
+				case "limit":
+					lim, err := strconv.Atoi(v.scalar)
+					if err != nil {
+						return nil, fmt.Errorf("config: line %d: search limit must be an integer", v.line)
+					}
+					ss.Limit = lim
+				default:
+					return nil, fmt.Errorf("config: line %d: unknown search key %q", v.line, k)
+				}
+			}
+			c.Searches = append(c.Searches, ss)
+		}
+	}
+
 	known["feeds"] = true
 	n := root.child("feeds")
 	if n == nil {
@@ -322,6 +419,9 @@ func finish(c *Config) (*Config, error) {
 	}
 	if c.Timeout.D() == 0 {
 		c.Timeout = Duration(20 * time.Second)
+	}
+	if err := validateSearches(c.Searches); err != nil {
+		return nil, err
 	}
 	set, err := filter.ParseLines(c.Filters)
 	if err != nil {
