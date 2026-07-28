@@ -74,8 +74,9 @@ type Config struct {
 	MaxItems     int      `json:"max_items"`
 	UserAgent    string   `json:"user_agent"`
 
-	TitleThreshold float64  `json:"title_threshold"`
-	TitleWindow    Duration `json:"title_window"`
+	TitleThreshold   float64  `json:"title_threshold"`
+	TitleWindow      Duration `json:"title_window"`
+	ContentThreshold float64  `json:"content_threshold"`
 
 	Filters  []string      `json:"filters"`
 	Searches []SavedSearch `json:"searches,omitempty"`
@@ -144,8 +145,9 @@ func Defaults() Config {
 // DedupOptions converts the config into feed dedup settings.
 func (c Config) DedupOptions() feed.DedupOptions {
 	return feed.DedupOptions{
-		TitleThreshold: c.TitleThreshold,
-		TitleWindow:    int64(c.TitleWindow.D() / time.Second),
+		TitleThreshold:   c.TitleThreshold,
+		TitleWindow:      int64(c.TitleWindow.D() / time.Second),
+		ContentThreshold: c.ContentThreshold,
 	}
 }
 
@@ -289,6 +291,7 @@ func ParseYAML(src string) (*Config, error) {
 		num("workers", &c.Workers),
 		num("max_items", &c.MaxItems),
 		flt("title_threshold", &c.TitleThreshold),
+		flt("content_threshold", &c.ContentThreshold),
 	} {
 		if err != nil {
 			return nil, err
@@ -413,6 +416,9 @@ func finish(c *Config) (*Config, error) {
 	}
 	if c.TitleThreshold < 0 || c.TitleThreshold > 1 {
 		return nil, fmt.Errorf("config: title_threshold must be between 0 and 1")
+	}
+	if c.ContentThreshold < 0 || c.ContentThreshold > 1 {
+		return nil, fmt.Errorf("config: content_threshold must be between 0 and 1")
 	}
 	if c.Refresh.D() < 0 || c.Timeout.D() < 0 || c.HostInterval.D() < 0 {
 		return nil, fmt.Errorf("config: durations must not be negative")
