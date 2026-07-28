@@ -123,6 +123,12 @@ type DedupOptions struct {
 	// TitleWindow bounds how far apart (in time) two entries may be published
 	// and still be matched by title. Zero disables the time constraint.
 	TitleWindow int64 // seconds
+	// ContentThreshold is the minimum shingle similarity at which two entries
+	// with different ids, links and titles are considered the same story. It
+	// catches syndicated copies that were retitled by the republisher. Values
+	// <= 0 disable content-based matching, which is the default: it costs a
+	// comparison against every kept entry.
+	ContentThreshold float64
 }
 
 // DefaultDedupOptions are the settings used when a config omits them.
@@ -130,14 +136,18 @@ func DefaultDedupOptions() DedupOptions {
 	return DedupOptions{TitleThreshold: 0.9, TitleWindow: 3 * 24 * 3600}
 }
 
-// Dedup merges entries that refer to the same item. Matching proceeds in three
-// stages: exact GUID/id, normalized URL, then title similarity. The first
+// Dedup merges entries that refer to the same item. Matching proceeds in up to
+// four stages: exact GUID/id, normalized URL, title similarity, then body
+// similarity when ContentThreshold is set. The first
 // occurrence of a duplicate group wins, except that an entry with a real date
 // replaces one without.
 func Dedup(entries []Entry, opts DedupOptions) []Entry {
 	out := make([]Entry, 0, len(entries))
 	byID := make(map[string]int, len(entries))
 	byURL := make(map[string]int, len(entries))
+	// Shingle sets of the kept entries, computed once each and only when
+	// content matching is enabled.
+	var kept []map[uint64]struct{}
 
 	for _, e := range entries {
 		idx := -1
@@ -166,8 +176,25 @@ func Dedup(entries []Entry, opts DedupOptions) []Entry {
 				}
 			}
 		}
+		if idx < 0 && opts.ContentThreshold > 0 {
+			if body := entryBody(e); strings.TrimSpace(body) != "" {
+				sh := Shingles(body)
+				for i := range out {
+					if !withinWindow(out[i], e, opts.TitleWindow) {
+						continue
+					}
+					if shingleSimilarity(kept[i], sh) >= opts.ContentThreshold {
+						idx = i
+						break
+					}
+				}
+			}
+		}
 		if idx >= 0 {
 			out[idx] = mergeEntries(out[idx], e)
+			if opts.ContentThreshold > 0 {
+				kept[idx] = Shingles(entryBody(out[idx]))
+			}
 			if out[idx].ID != "" {
 				byID[out[idx].ID] = idx
 			}
@@ -183,6 +210,9 @@ func Dedup(entries []Entry, opts DedupOptions) []Entry {
 			continue
 		}
 		out = append(out, e)
+		if opts.ContentThreshold > 0 {
+			kept = append(kept, Shingles(entryBody(e)))
+		}
 		i := len(out) - 1
 		if e.ID != "" {
 			byID[e.ID] = i
