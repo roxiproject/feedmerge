@@ -487,6 +487,12 @@ go test ./...
 go test -race -cover ./...
 ```
 
+## Related projects
+
+- [logquery](https://github.com/roxiproject/logquery) - SQL-like query language over structured logs.
+- [contribution-atlas](https://github.com/roxiproject/contribution-atlas) - renders a GitHub contribution calendar as a heatmap/SVG.
+- [roxiproject](https://github.com/roxiproject/roxiproject) - full project index/profile README.
+
 ## License
 
 Released under the MIT License. See [LICENSE](LICENSE).
