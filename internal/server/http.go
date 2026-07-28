@@ -28,6 +28,7 @@ func NewServer(m *Merger) *Server {
 	s.mux.HandleFunc("/saved/", s.handleSaved)
 	s.mux.HandleFunc("/feeds.opml", s.handleOPML)
 	s.mux.HandleFunc("/search", s.handleSearch)
+	s.mux.HandleFunc("/metrics", s.handleMetrics)
 	s.mux.HandleFunc("/healthz", s.handleHealth)
 	s.mux.HandleFunc("/", s.handleIndex)
 	return s
@@ -195,6 +196,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		"GET /feeds.opml the configured sources as an OPML subscription list",
 		"GET /search     full-text search over the merged entries (?q=, &limit=)",
 		"GET /healthz     per-source fetch status",
+		"GET /metrics     per-source health counters across refreshes",
 		"",
 	}, "\n")))
 }

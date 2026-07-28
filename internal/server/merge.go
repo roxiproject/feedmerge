@@ -54,11 +54,14 @@ type Merger struct {
 	fetcher *fetch.Fetcher
 	logger  *log.Logger
 
-	mu       sync.RWMutex
-	snap     *Snapshot
-	lastErr  error
-	lastRun  time.Time
-	refreshM sync.Mutex
+	health *healthTracker
+
+	mu        sync.RWMutex
+	snap      *Snapshot
+	lastErr   error
+	lastRun   time.Time
+	refreshes int
+	refreshM  sync.Mutex
 }
 
 // NewMerger returns a Merger for cfg. A nil logger disables logging.
@@ -69,13 +72,20 @@ func NewMerger(cfg *config.Config, f *fetch.Fetcher, logger *log.Logger) *Merger
 			f.UserAgent = cfg.UserAgent
 		}
 	}
-	return &Merger{cfg: cfg, fetcher: f, logger: logger}
+	return &Merger{cfg: cfg, fetcher: f, logger: logger, health: newHealthTracker()}
 }
 
 func (m *Merger) logf(format string, args ...any) {
 	if m.logger != nil {
 		m.logger.Printf(format, args...)
 	}
+}
+
+// Refreshes reports how many refresh cycles have completed, successful or not.
+func (m *Merger) Refreshes() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.refreshes
 }
 
 // Config returns the configuration the merger was built with.
@@ -144,11 +154,15 @@ func (m *Merger) Refresh(ctx context.Context) (*Snapshot, error) {
 		statuses = append(statuses, st)
 	}
 
+	now := time.Now()
+	m.health.record(statuses, now)
+
 	if okCount == 0 {
 		err := fmt.Errorf("merge: all %d feeds failed", len(results))
 		m.mu.Lock()
 		m.lastErr = err
-		m.lastRun = time.Now()
+		m.lastRun = now
+		m.refreshes++
 		m.mu.Unlock()
 		return nil, err
 	}
@@ -205,6 +219,7 @@ func (m *Merger) Refresh(ctx context.Context) (*Snapshot, error) {
 	m.snap = snap
 	m.lastErr = nil
 	m.lastRun = time.Now()
+	m.refreshes++
 	m.mu.Unlock()
 
 	m.logf("merged %d entries from %d/%d feeds (%d failed)", len(entries), okCount, len(results), failures)
