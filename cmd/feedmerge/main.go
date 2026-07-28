@@ -26,6 +26,7 @@ const usage = `feedmerge - merge RSS and Atom feeds into one normalized feed
 Usage:
   feedmerge serve --config feeds.yaml [--addr :8080]
   feedmerge search --config feeds.yaml <query>
+  feedmerge opml import <file.opml> | export --config feeds.yaml
   feedmerge fetch <url> [--format summary|rss|atom|json]
   feedmerge version
 
@@ -52,6 +53,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return cmdServe(args[1:], stderr)
 	case "search":
 		return cmdSearch(args[1:], stdout, stderr)
+	case "opml":
+		return cmdOPML(args[1:], stdout, stderr)
 	case "fetch":
 		return cmdFetch(args[1:], stdout)
 	case "version", "--version", "-v":
