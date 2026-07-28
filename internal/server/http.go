@@ -24,6 +24,7 @@ func NewServer(m *Merger) *Server {
 	s.mux.HandleFunc("/feed.rss", s.handleFeed("rss"))
 	s.mux.HandleFunc("/feed.atom", s.handleFeed("atom"))
 	s.mux.HandleFunc("/feed.json", s.handleFeed("json"))
+	s.mux.HandleFunc("/feeds.opml", s.handleOPML)
 	s.mux.HandleFunc("/search", s.handleSearch)
 	s.mux.HandleFunc("/healthz", s.handleHealth)
 	s.mux.HandleFunc("/", s.handleIndex)
@@ -187,6 +188,7 @@ func (s *Server) handleIndex(w http.ResponseWriter, r *http.Request) {
 		"GET /feed.xml    merged feed as RSS 2.0",
 		"GET /feed.atom   merged feed as Atom 1.0",
 		"GET /feed.json   merged feed as JSON Feed 1.1",
+		"GET /feeds.opml the configured sources as an OPML subscription list",
 		"GET /search     full-text search over the merged entries (?q=, &limit=)",
 		"GET /healthz     per-source fetch status",
 		"",

@@ -78,6 +78,9 @@ func (m *Merger) logf(format string, args ...any) {
 	}
 }
 
+// Config returns the configuration the merger was built with.
+func (m *Merger) Config() *config.Config { return m.cfg }
+
 // Snapshot returns the most recent successful render, or nil if none exists.
 func (m *Merger) Snapshot() *Snapshot {
 	m.mu.RLock()
