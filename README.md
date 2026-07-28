@@ -23,6 +23,9 @@ things a reader cannot:
   rate limited per host, and revalidates with `If-None-Match` /
   `If-Modified-Since`. Ten readers behind the merge cause one upstream request,
   not ten.
+- **Search.** The merged entries are indexed as they are rendered, so the whole
+  set is searchable over HTTP and from the command line, and a saved query can
+  itself be subscribed to as a feed.
 - **Normalization.** Downstream consumers get one format, one date encoding and
   absolute URLs regardless of how sloppy the upstream document was.
 
@@ -46,11 +49,17 @@ go build -o feedmerge ./cmd/feedmerge
 
 ```
 feedmerge serve --config feeds.yaml [--addr :8080] [--refresh 10m] [--quiet]
+feedmerge search --config feeds.yaml [--limit 10] [--format text|json] <query>
+feedmerge opml import <file.opml> [--title T] [--folder F]
+feedmerge opml export --config feeds.yaml
 feedmerge fetch <url> [--format summary|rss|atom|json] [--limit N] [--timeout 20s]
 feedmerge version
 ```
 
-`serve` runs the merge loop and the HTTP server. `fetch` is a one-off inspector:
+`serve` runs the merge loop and the HTTP server. `search` merges once and runs a
+query against the result, printing ranked hits with a snippet of the matching
+text. `opml import` turns a feed reader's export into a config file and
+`opml export` turns a config back into OPML. `fetch` is a one-off inspector:
 it retrieves a single feed and prints what the parser made of it, which is the
 fastest way to find out why an entry has the date or identity it does.
 
@@ -99,6 +108,14 @@ user_agent: "feedmerge/1.0 (+https://example.org/reading)"
 # Deduplication tuning.
 title_threshold: 0.9  # Jaccard similarity at which two titles are "the same"
 title_window: 72h     # only match by title within this time distance
+content_threshold: 0  # body similarity at which two entries are the same story
+
+# Saved searches, each published as a feed under /saved.
+searches:
+  - name: releases
+    query: release "release candidate" -beta
+    title: Release announcements
+    limit: 50
 
 filters:
   - exclude title ~ /\b(sponsored|advertisement)\b/i
@@ -126,7 +143,9 @@ feeds:
 | `max_items` | int | `200` | Entries kept after merging; `0` means unlimited |
 | `user_agent` | string | `feedmerge/1.0 (...)` | `User-Agent` sent upstream |
 | `title_threshold` | float | `0.9` | Title similarity required to call two entries duplicates; `0` disables |
-| `title_window` | duration | `72h` | Maximum publication-time distance for a title match |
+| `title_window` | duration | `72h` | Maximum publication-time distance for a title or body match |
+| `content_threshold` | float | `0` | Body similarity required to call two entries duplicates; `0` disables |
+| `searches` | list | - | Saved searches, as `{name, query, title, limit}` |
 | `filters` | list of strings | - | Filter DSL rules |
 | `feeds` | list | required | Upstream feeds, as `{url, name}` or a bare URL string |
 
@@ -150,7 +169,12 @@ same keys work in JSON:
 | `GET /feed.rss` | `application/rss+xml` | Alias for `/feed.xml` |
 | `GET /feed.atom` | `application/atom+xml` | Merged feed as Atom 1.0 |
 | `GET /feed.json` | `application/feed+json` | Merged feed as JSON Feed 1.1 |
-| `GET /healthz` | `application/json` | Per-source fetch status |
+| `GET /search?q=` | `application/json` | Ranked full-text search over the merged entries |
+| `GET /saved` | `application/json` | Listing of the configured saved searches |
+| `GET /saved/<name>.xml` | `application/rss+xml` | One saved search as a feed (also `.atom`, `.json`) |
+| `GET /feeds.opml` | `text/x-opml` | The configured sources as an OPML subscription list |
+| `GET /healthz` | `application/json` | Per-source status of the last fetch |
+| `GET /metrics` | `application/json` | Per-source health counters across refreshes |
 | `GET /` | `text/plain` | Endpoint listing |
 
 `HEAD` works on every feed endpoint. Anything other than `GET`/`HEAD` gets a
@@ -181,6 +205,151 @@ failed), `starting` or `error`:
      "ok": false, "not_modified": false, "status": 502, "entries": 0,
      "error": "fetch https://down.example/feed.xml: unexpected status 502 Bad Gateway",
      "duration_ms": 12}
+  ]
+}
+```
+
+## Full-text search
+
+Every merge builds an in-memory inverted index over the entries it produced, so
+searching never touches the network and never re-parses a feed. Ranking is Okapi
+BM25 (`k1 = 1.2`, `b = 0.75`) over per-field weighted term frequencies: a term in
+the title counts three times, in a category twice, in an author name one and a
+half times, and once in the source name or the body. That weighting is what makes
+a search for a headline return the headline rather than every entry that mentions
+it in passing.
+
+Bodies are converted to plain text before indexing, so markup and the contents of
+`<script>` or `<style>` never reach the term statistics. Terms are lowercased
+alphanumeric runs; a short stop-word list is dropped at both index and query
+time.
+
+### Query syntax
+
+| Form | Meaning |
+| --- | --- |
+| `postgres wal` | Rank by both terms; neither is required |
+| `+postgres wal` | The document must contain `postgres` |
+| `-mysql` | The document must not contain `mysql` |
+| `"write ahead log"` | The three words must appear adjacently |
+| `-"release candidate"` | The phrase must not appear |
+
+Unbalanced quotes are read as if the closing quote were at the end of the input,
+so a half-typed query still searches. A query that is empty or made only of stop
+words returns nothing rather than everything, which is what keeps a stray
+`?q=` from dumping the whole store.
+
+### Over HTTP
+
+`GET /search?q=...&limit=20` returns ranked hits with a snippet of the matching
+text. `limit` defaults to 20 and is capped at 200; `total` always reports the
+real match count, not the page size. `parsed` echoes how the query was
+understood, which is the quickest way to see why an operator did not do what you
+expected.
+
+```json
+{
+  "query": "postgres \"write ahead log\" -mysql",
+  "parsed": "postgres -mysql \"write ahead log\"",
+  "total": 4,
+  "limit": 20,
+  "indexed": 137,
+  "results": [
+    {
+      "id": "urn:pg:1",
+      "title": "Postgres write ahead log internals",
+      "link": "https://www.postgresql.org/news/wal",
+      "source": "PostgreSQL News",
+      "published": "2026-07-26T09:00:00Z",
+      "score": 8.4213,
+      "snippet": "…the write ahead log is how Postgres survives a crash…",
+      "matched": ["postgres", "write ahead log"]
+    }
+  ]
+}
+```
+
+Search responses are cached like feed responses: each query and page size gets
+its own `ETag`, so a client revalidating one query is never told that a different
+one is fresh.
+
+### From the command line
+
+```
+$ feedmerge search --config feeds.yaml postgres "write ahead log"
+query:   postgres "write ahead log"
+indexed: 137 entries
+matches: 4
+
+  1. [8.421] Postgres write ahead log internals
+     https://www.postgresql.org/news/wal
+     PostgreSQL News  2026-07-26T09:00:00Z
+     …the write ahead log is how Postgres survives a crash…
+     matched: postgres, write ahead log
+```
+
+`--format json` prints the same information in the shape of the HTTP response.
+
+## Saved searches
+
+A saved search is a named query published as a feed of its own, so a reader can
+subscribe to a slice of the merge instead of all of it:
+
+```yaml
+searches:
+  - name: releases
+    query: release "release candidate" -beta
+    title: Release announcements
+    limit: 50
+```
+
+Each one is served at `/saved/<name>.xml`, `.atom` and `.json` (a bare
+`/saved/<name>` is RSS), with the same conditional-GET handling as the merged
+feed. `GET /saved` lists them as JSON. Names appear in the URL, so they are
+restricted to letters, digits, `-` and `_`, and a duplicate or empty name is
+refused at load time rather than producing an unreachable feed.
+
+## OPML
+
+Subscription lists move both ways. `feedmerge opml import` reads a reader's
+export and writes a config file to standard output:
+
+```sh
+feedmerge opml import subscriptions.opml --title "My merge" > feeds.yaml
+feedmerge opml import subscriptions.opml --folder Go > go-only.yaml
+```
+
+Nested outlines are flattened, with the folder path remembered so `--folder`
+can select a subtree; duplicate feed URLs are dropped; feeds that are not
+`http(s)` are left in the output as a comment rather than silently discarded.
+A document that is not OPML, or that contains no feed at all, is an error.
+
+`feedmerge opml export --config feeds.yaml` goes the other way, and the server
+publishes the same document at `/feeds.opml` for a reader to import directly.
+
+## Health metrics
+
+`/healthz` describes the most recent fetch. `/metrics` describes the history:
+per source, how many fetches were attempted, how many succeeded, how many were
+answered `304`, the current consecutive-failure streak, last success and failure
+times, the last error, last and average latency, and the success rate. That is
+the difference between a feed that blipped once and one that has been broken
+since yesterday.
+
+```json
+{
+  "uptime_sec": 86400,
+  "refreshes": 96,
+  "degraded": 1,
+  "entries": 137,
+  "indexed": 137,
+  "terms": 9184,
+  "sources": [
+    {"url": "https://go.dev/blog/feed.atom", "name": "The Go Blog",
+     "fetches": 96, "successes": 96, "failures": 0, "not_modified": 91,
+     "consecutive_failures": 0, "entries": 24, "last_status": 304,
+     "last_success": "2026-07-27T12:00:00Z",
+     "last_duration_ms": 38, "avg_duration_ms": 44, "success_rate": 1}
   ]
 }
 ```
@@ -227,7 +396,7 @@ filters:
 
 ## Deduplication strategy
 
-Entries from all feeds go into one list and are compared in three stages. The
+Entries from all feeds go into one list and are compared in up to four stages. The
 first stage that matches wins, and the first occurrence of a duplicate group is
 the one kept - so ordering feeds by preference in the config decides which copy
 survives.
@@ -245,6 +414,14 @@ survives.
    sets is compared against `title_threshold`. A match also has to fall inside
    `title_window` of publication time, so a yearly "Release notes" post is not
    folded into last year's.
+
+4. **Body similarity.** Off by default, enabled by setting `content_threshold`.
+   Bodies are stripped of markup and entities and reduced to lowercased words;
+   the overlapping four-word runs of each are hashed into a set, and the Jaccard
+   similarity of the two sets is compared against the threshold. This catches a
+   syndicated copy that the republisher retitled, which stages 1 to 3 all miss.
+   It costs a comparison against every entry kept so far, which is why it is
+   opt-in, and it honours `title_window` in the same way stage 3 does.
 
 When two entries merge, the survivor is filled in from the other wherever it is
 missing a link, body, summary, author, date or categories, and a hash-derived

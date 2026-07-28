@@ -15,6 +15,17 @@ user_agent: "feedmerge/1.0 (+https://example.org/reading)"
 # Deduplication tuning.
 title_threshold: 0.9  # Jaccard similarity at which two titles are "the same"
 title_window: 72h     # only match by title within this time distance
+content_threshold: 0  # body similarity at which two entries are the same story;
+                      # 0 disables it, 0.8 catches retitled syndicated copies
+
+# Saved searches, each published as a feed of its own under /saved.
+searches:
+  - name: releases
+    query: release "release candidate" -beta
+    title: Release announcements
+    limit: 50
+  - name: postgres
+    query: postgres +internals
 
 # Filter DSL: applied after deduplication, in order.
 filters:
